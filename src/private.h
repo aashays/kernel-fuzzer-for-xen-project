@@ -32,6 +32,8 @@ extern FILE *input_file;
 extern char *input_path;
 extern size_t input_size;
 extern size_t input_limit;
+extern unsigned int input_frame;
+extern unsigned int input_frames;
 extern unsigned char *input;
 extern uint32_t domid, sinkdomid, fuzzdomid;
 extern bool afl;

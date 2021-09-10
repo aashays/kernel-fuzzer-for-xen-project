@@ -11,6 +11,8 @@ FILE *input_file;
 char *input_path;
 size_t input_size;
 size_t input_limit;
+unsigned int input_frame;
+unsigned int input_frames;
 unsigned char *input;
 uint32_t domid, sinkdomid, fuzzdomid;
 bool afl;

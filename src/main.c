@@ -9,21 +9,21 @@ static void get_input(void)
     if ( !input_limit )
         return;
 
-    if ( debug ) printf("Get %lu bytes of input from %s\n", input_limit, input_path);
+    if ( debug ) printf("Get up to %lu bytes of input from %s\n", input_limit * 10, input_path);
 
     input_file = fopen(input_path, "r");
     if (!input_file){
         return;
     }
 
-    input = malloc(input_limit);
+    input = malloc(input_limit * 10);
     if ( !input ){
         fclose(input_file);
         input_file = NULL;
         return;
     }
 
-    if ( !(input_size = fread(input, 1, input_limit, input_file)) )
+    if ( !(input_size = fread(input, 1, input_limit * 10, input_file)) )
     {
         free(input);
         input = NULL;
@@ -31,10 +31,12 @@ static void get_input(void)
     fclose(input_file);
     input_file = NULL;
 
-    if ( debug ) printf("Got input size %lu\n", input_size);
+    input_frames = input_size / input_limit;
+    if (input_size % input_limit) input_frames++;
+    if ( debug ) printf("Got input size %lu (%d frames)\n", input_size, input_frames);
 }
 
-static bool inject_input(vmi_instance_t vmi)
+bool inject_input(vmi_instance_t vmi)
 {
     if ( !input || !input_size )
         return false;
@@ -45,9 +47,20 @@ static bool inject_input(vmi_instance_t vmi)
         .addr = address
     );
 
-    if ( debug ) printf("Writing %lu bytes of input to 0x%lx\n", input_size, address);
+    size_t to_write;
+    unsigned char *write_src = &input[input_frame * input_limit];
+    if (input_frame < input_frames) {
+      to_write = input_limit;
+    } else if (input_size % input_limit) {
+      to_write = input_size % input_limit;
+    } else {
+      to_write = input_limit;
+    }
+    input_frame = (input_frame + 1) % input_frames;
 
-    return VMI_SUCCESS == vmi_write(vmi, &ctx, input_size, input, NULL);
+    if ( debug ) printf("Writing %lu bytes of input to 0x%lx\n", to_write, address);
+
+    return VMI_SUCCESS == vmi_write(vmi, &ctx, to_write, write_src, NULL);
 }
 
 static bool make_fuzz_ready()
@@ -250,6 +263,7 @@ int main(int argc, char** argv)
     input_path = NULL;
     input_size = 0;
     input_limit = 0;
+    input_frame = 0;
 
     while ((c = getopt_long (argc, argv, opts, long_opts, &long_index)) != -1)
     {
@@ -391,6 +405,7 @@ int main(int argc, char** argv)
         return parent_ready ? 0 : -1;
     }
 
+
     if ( !parent_ready )
         goto done;
 
@@ -398,6 +413,10 @@ int main(int argc, char** argv)
     {
         fprintf(stderr, "Failed to grab xc interface\n");
         goto done;
+    }
+
+    for (size_t i = 0; i < (input_limit / 4096) + 1; ++i) {
+            doublefetch = g_slist_prepend(doublefetch, GSIZE_TO_POINTER(address + i*4096));
     }
 
     /*

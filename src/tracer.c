@@ -4,6 +4,8 @@
  */
 #include "private.h"
 
+extern bool inject_input(vmi_instance_t vmi);
+
 static const char *traptype[] = {
     [VMI_EVENT_SINGLESTEP] = "singlestep",
     [VMI_EVENT_CPUID] = "cpuid",
@@ -323,29 +325,27 @@ static event_response_t tracer_cb(vmi_instance_t vmi, vmi_event_t *event)
                             (event->mem_event.out_access & VMI_MEMACCESS_X) ? 'x' : '-');
 
         /* Only care about data-fetches */
-        if ( event->mem_event.out_access & VMI_MEMACCESS_R )
+        if ( input_frames > 1 && (event->mem_event.out_access & VMI_MEMACCESS_R) && !(event->mem_event.out_access & VMI_MEMACCESS_W) )
         {
-            /* If fetch happened at the address we just saw last, doublefetch detected! */
-            if ( event->mem_event.gla == doublefetch_check_va )
-            {
-                if ( debug ) printf("Doublefetch detected at 0x%lx\n", event->mem_event.gla);
-
-                /*
-                 * Check if this doublefetch is triggered by a RIP-pair we haven't seen before.
-                 * We want to only report a crash back to AFL for new pairs and let the code
-                 * continue running.
-                 */
-                addr_t key = event->x86_regs->rip ^ doublefetch_rip;
-                if ( g_hash_table_insert(doublefetch_lookup, GSIZE_TO_POINTER(key), NULL) )
-                    doublefetch_trip = 1;
+            gpointer p1, p2;
+            if ( g_hash_table_lookup_extended(doublefetch_lookup, GSIZE_TO_POINTER(event->mem_event.gla), &p1, &p2) ) {
+                if ( debug ) printf("Mem swap to frame %d\n", input_frame);
+                inject_input(vmi);
+                g_hash_table_remove_all(doublefetch_lookup);
+            } else {
+                if ( debug ) printf("Mem fresh access\n");
             }
-
-            /* Store address currently fetched for future reference */
-            doublefetch_check_va = event->mem_event.gla;
-            doublefetch_rip = event->x86_regs->rip;
+                
 
             if ( record_memaccess )
                 g_hash_table_insert(memaccess, GSIZE_TO_POINTER(event->mem_event.gla), GSIZE_TO_POINTER(event->x86_regs->rip));
+        }
+        if (input_frames > 1) {
+            g_hash_table_insert(doublefetch_lookup, GSIZE_TO_POINTER(event->mem_event.gla), NULL);
+        }
+        if (debug) {
+          size_t offset = ((input_frame ? input_frame - 1 : input_frames - 1)  * input_limit) + event->mem_event.gla - address;
+          printf("DF 0x%08x read 0x%08x (input offset 0x%lx)\n", event->mem_event.gla - address, *(uint32_t*) &input[offset], offset);
         }
 
         /* Allow access through but mark that permissions need to be reset after singlestep */
